@@ -46,7 +46,7 @@ class MWEMSynthesizer(BaseSynthesizer):
         :return: synthetic data, real data histograms
         :rtype: np.ndarray
         """
-        if isinstance(data, ndarray):
+        if isinstance(data, np.ndarray):
             self.data = data.copy()
         else:
             raise ValueError("Data must be a numpy array.")
@@ -61,7 +61,7 @@ class MWEMSynthesizer(BaseSynthesizer):
         # to achieve DP
 
         self.histogram, self.dimensions, self.data_bins = self.histogram_from_data_attributes(self.data)
-        self.Q = self.compose_arbitrary_slices(self.Q_count, self.dimensions)
+        self.Q = self.compose_arbitrary_slices_again(self.Q_count, self.dimensions)
         # TODO: Add special support for categorical+ordinal columns
 
         # Run the algorithm
@@ -111,14 +111,14 @@ class MWEMSynthesizer(BaseSynthesizer):
         for i in range(self.iterations):
             print("Iteration: " + str(i))
 
-            qi = self.exponential_mechanism(self.histogram, A, self.Q, (epsilon / (2*self.iterations)))
+            qi = self.exponential_mechanism(self.histogram, A, self.Q, (self.epsilon / (2*self.iterations)))
 
             # Make sure we get a different query to measure:
             while(qi in measurements):
-                qi = self.exponential_mechanism(self.histogram, A, self.Q, (epsilon / (2*self.iterations)))
+                qi = self.exponential_mechanism(self.histogram, A, self.Q, (self.epsilon / (2*self.iterations)))
 
             # NOTE: Add laplace noise here with budget
-            evals = self.evaluate(self.Q[qi], self.histogram)
+            evals = self.evaluate_again(self.Q[qi], self.histogram)
             lap = self.laplace((2*self.iterations)/(self.epsilon*len(self.dimensions)))
             measurements[qi] = evals + lap
 
@@ -200,7 +200,7 @@ class MWEMSynthesizer(BaseSynthesizer):
         errors = np.zeros(len(Q))
 
         for i in range(len(errors)):
-            errors[i] = eps * abs(self.evaluate(Q[i], hist)-self.evaluate(Q[i], A))/2.0
+            errors[i] = eps * abs(self.evaluate_again(Q[i], hist)-self.evaluate_again(Q[i], A))/2.0
 
         maxi = max(errors)
 
@@ -242,10 +242,10 @@ class MWEMSynthesizer(BaseSynthesizer):
 
         for _ in range(iterate):
             for qi in m:
-                error = m[qi] - self.evaluate(Q[qi], A)
+                error = m[qi] - self.evaluate_again(Q[qi], A)
 
                 # Perform the weights update
-                query_update = self.binary_replace_in_place_slice(np.zeros_like(A.copy()), Q[qi])
+                query_update = self.binary_replace_in_place_slice_again(np.zeros_like(A.copy()), Q[qi])
                 
                 # Apply the update
                 A_multiplier = np.exp(query_update * error/(2.0 * sum_A))
@@ -256,30 +256,8 @@ class MWEMSynthesizer(BaseSynthesizer):
                 count_A = np.sum(A)
                 A = A * (sum_A/count_A)
         return A
-    
-    def evaluate(self, a_slice, data):
-        """
-        Evaluate a count query i.e. an arbitrary slice
 
-        :param a_slice: Random slice within bounds of flattened data length
-        :type a_slice: np.s_
-        :param data: Data to evaluate from (synthetic dset)
-        :type data: np.ndarray
-        :return: Count from data within slice
-        :rtype: float
-        """
-        # We want to count the number of objects in an
-        # arbitrary slice of our collection
-
-        # We use np.s_[arbitrary slice] as our queries
-        e = data.flatten()[a_slice]
-        
-        if isinstance(e, np.ndarray):
-            return np.sum(e)
-        else:
-            return e
-
-    def compose_arbitrary_slices(self, num_s, dimensions):
+    def compose_arbitrary_slices_again(self, num_s, dimensions):
         """
         Here, dimensions is the shape of the histogram
         We want to return a list of length num_s, containing
@@ -299,21 +277,51 @@ class MWEMSynthesizer(BaseSynthesizer):
         # TODO: For analysis, generate a distribution of slice sizes,
         # by running the list of slices on a dimensional array
         # and plotting the bucket size
+        slices_list = []
         for _ in range(num_s):
-            # Random linear sample, within dimensions
-            # i.e. a contiguous query for the flattened dims
-            len_ind = np.prod(dimensions)
-            a = np.random.randint(len_ind)
-            b = np.random.randint(len_ind)
-            while a == b:
-                a = np.random.randint(len_ind)
-                b = np.random.randint(len_ind)
-            # Set bounds and add the slice
-            l_b = min(a,b) ; u_b = max(a,b)
-            slices_list.append(np.s_[l_b:u_b])
+            inds = []
+            for _,s in np.ndenumerate(dimensions):
+                # Random linear sample, within dimensions
+                a = np.random.randint(s)
+                b = np.random.randint(s)
+
+                l_b = min(a,b) ; u_b = max(a,b) + 1
+                pre = []
+                pre.append(l_b)
+                pre.append(u_b)
+                inds.append(pre)
+
+            # Compose slices
+            sl = []
+            for ind in inds:
+                sl.append(np.s_[ind[0]:ind[1]])
+
+            slices_list.append(sl)
         return slices_list
 
-    def binary_replace_in_place_slice(self, data, a_slice):
+    def evaluate_again(self, a_slice, data):
+        """
+        Evaluate a count query i.e. an arbitrary slice
+
+        :param a_slice: Random slice within bounds of flattened data length
+        :type a_slice: np.s_
+        :param data: Data to evaluate from (synthetic dset)
+        :type data: np.ndarray
+        :return: Count from data within slice
+        :rtype: float
+        """
+        # We want to count the number of objects in an
+        # arbitrary slice of our collection
+
+        # We use np.s_[arbitrary slice] as our queries
+        e = data.T[a_slice]
+        
+        if isinstance(e, np.ndarray):
+            return np.sum(e)
+        else:
+            return e
+
+    def binary_replace_in_place_slice_again(self, data, a_slice):
         """
         We want to create a binary copy of the data,
         so that we can easily perform our error multiplication
@@ -327,13 +335,9 @@ class MWEMSynthesizer(BaseSynthesizer):
         by a_slice is all 1s.
         :rtype: np.ndarray
         """
-        view = data.flatten()
-
-        view[a_slice] = 1.0
-
-        # Recreate the shape of the flattened data
-        dim_arr_offset = np.prod(data.shape)
-        return view[0:dim_arr_offset].reshape(data.shape)
+        view = data.copy()
+        view.T[a_slice] = 1.0
+        return view
     
     def laplace(self, sigma):
         """
