@@ -61,7 +61,7 @@ class MWEMSynthesizer(BaseSynthesizer):
         # to achieve DP
 
         self.histogram, self.dimensions, self.data_bins = self.histogram_from_data_attributes(self.data)
-        self.Q = self.compose_arbitrary_slices_again(self.Q_count, self.dimensions)
+        self.Q = self.compose_arbitrary_slices(self.Q_count, self.dimensions)
         # TODO: Add special support for categorical+ordinal columns
 
         # Run the algorithm
@@ -118,7 +118,7 @@ class MWEMSynthesizer(BaseSynthesizer):
                 qi = self.exponential_mechanism(self.histogram, A, self.Q, (self.epsilon / (2*self.iterations)))
 
             # NOTE: Add laplace noise here with budget
-            evals = self.evaluate_again(self.Q[qi], self.histogram)
+            evals = self.evaluate(self.Q[qi], self.histogram)
             lap = self.laplace((2*self.iterations)/(self.epsilon*len(self.dimensions)))
             measurements[qi] = evals + lap
 
@@ -200,7 +200,7 @@ class MWEMSynthesizer(BaseSynthesizer):
         errors = np.zeros(len(Q))
 
         for i in range(len(errors)):
-            errors[i] = eps * abs(self.evaluate_again(Q[i], hist)-self.evaluate_again(Q[i], A))/2.0
+            errors[i] = eps * abs(self.evaluate(Q[i], hist)-self.evaluate(Q[i], A))/2.0
 
         maxi = max(errors)
 
@@ -242,10 +242,10 @@ class MWEMSynthesizer(BaseSynthesizer):
 
         for _ in range(iterate):
             for qi in m:
-                error = m[qi] - self.evaluate_again(Q[qi], A)
+                error = m[qi] - self.evaluate(Q[qi], A)
 
                 # Perform the weights update
-                query_update = self.binary_replace_in_place_slice_again(np.zeros_like(A.copy()), Q[qi])
+                query_update = self.binary_replace_in_place_slice(np.zeros_like(A.copy()), Q[qi])
                 
                 # Apply the update
                 A_multiplier = np.exp(query_update * error/(2.0 * sum_A))
@@ -257,7 +257,7 @@ class MWEMSynthesizer(BaseSynthesizer):
                 A = A * (sum_A/count_A)
         return A
 
-    def compose_arbitrary_slices_again(self, num_s, dimensions):
+    def compose_arbitrary_slices(self, num_s, dimensions):
         """
         Here, dimensions is the shape of the histogram
         We want to return a list of length num_s, containing
@@ -299,7 +299,7 @@ class MWEMSynthesizer(BaseSynthesizer):
             slices_list.append(sl)
         return slices_list
 
-    def evaluate_again(self, a_slice, data):
+    def evaluate(self, a_slice, data):
         """
         Evaluate a count query i.e. an arbitrary slice
 
@@ -321,7 +321,7 @@ class MWEMSynthesizer(BaseSynthesizer):
         else:
             return e
 
-    def binary_replace_in_place_slice_again(self, data, a_slice):
+    def binary_replace_in_place_slice(self, data, a_slice):
         """
         We want to create a binary copy of the data,
         so that we can easily perform our error multiplication
@@ -349,4 +349,3 @@ class MWEMSynthesizer(BaseSynthesizer):
         :rtype: float
         """
         return sigma * np.log(random.random()) * np.random.choice([-1, 1])
-
